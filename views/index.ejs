@@ -1,0 +1,102 @@
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IP Monitor</title>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        .up { color: green; }
+        .down { color: red; }
+        #downloadBtn {
+            margin-top: 20px;
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        #downloadBtn:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>IP Monitor</h1>
+    <form id="ipForm">
+        <input type="text" id="ipAddress" placeholder="Enter IP Address" required>
+        <input type="text" id="ipLocation" placeholder="Enter Location" required>
+        <button type="submit">Add IP</button>
+    </form>
+    <!--<h2>IP Status</h2>-->
+    <button id="downloadBtn">Download Downtime History</button>
+    <table>
+        <thead>
+            <tr>
+                <th>IP Address</th>
+                <th> Location </th>
+                <th>Status</th>
+                <th>Downtime Count</th>
+                <th>Last Downtime (MM/DD/YYYY) </th>
+<!DOCTYPE html>
+               <!--  <th>Downtime History</th> -->
+            </tr>
+        </thead>
+        <tbody id="ipTableBody"></tbody>
+    </table>
+    <script>
+        async function fetchIPs() {
+            const response = await fetch('/api/ip');
+            const ips = await response.json();
+            const tbody = document.getElementById('ipTableBody');
+            tbody.innerHTML = '';
+            ips.forEach(ip => {
+                const row = document.createElement('tr');
+                const lastDowntime = ip.lastDowntime ? new Date(ip.lastDowntime).toLocaleString() : 'N/A';
+                row.innerHTML = `
+                    <td>${ip.address}</td>
+                    <td>${ip.location}</td>
+                    <td class="${ip.status.toLowerCase()}">${ip.status}</td>
+                    <td>${ip.downtimeCount}</td>
+                    <td>${ ip.lastDowntime ? new Date(ip.lastDowntime).toLocaleString() : ''}</td>
+                    <!--<td>${ip.downtime.map(d => new Date(d.timestamp).toLocaleString()).join('<br>')}</td> -->
+                `;
+                tbody.appendChild(row);
+            });
+        }
+
+        document.getElementById('ipForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const ipAddress = document.getElementById('ipAddress').value;
+            const ipLocation = document.getElementById('ipLocation').value;
+            await fetch('/api/ip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address: ipAddress,location: ipLocation })
+            });
+            document.getElementById('ipAddress').value = '';
+            document.getElementById('ipLocation').value = '';
+            fetchIPs();
+        });
+
+        document.getElementById('downloadBtn').addEventListener('click', async () => {
+            const response = await fetch('/api/download');
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.style.display = 'none';
+            a.href = url;
+            a.download = 'downtime_history.csv';
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+        });
+
+        setInterval(fetchIPs, 1000); // Refresh every 10 seconds
+        fetchIPs();
+    </script>
+</body>
+</html>
