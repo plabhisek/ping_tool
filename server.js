@@ -220,7 +220,7 @@ app.get('/api/locations', async (req, res) => {
     }
 });
 
-// API to download downtime history as CSV with filtering
+// API to download downtime history as CSV with filtering - FIXED
 app.get('/api/download', async (req, res) => {
     try {
         const { startDate, endDate, ipAddress } = req.query;
@@ -255,10 +255,21 @@ app.get('/api/download', async (req, res) => {
         const fields = ['address', 'timestamp', 'duration'];
         const opts = { fields };
         
+        // Handle empty data case
+        if (data.length === 0) {
+            data.push({
+                address: 'No data',
+                timestamp: 'No data',
+                duration: 'No data'
+            });
+        }
+        
         const parser = new Parser(opts);
         const csv = parser.parse(data);
         
-        const filePath = path.join(__dirname, 'downtime_history.csv');
+        // Use a unique filename based on timestamp to avoid caching issues
+        const timestamp = new Date().getTime();
+        const filePath = path.join(__dirname, `downtime_history_${timestamp}.csv`);
         fs.writeFileSync(filePath, csv);
 
         res.download(filePath, 'downtime_history.csv', (err) => {
@@ -266,7 +277,11 @@ app.get('/api/download', async (req, res) => {
                 console.error('Error downloading the file:', err);
                 res.status(500).send('Error downloading the file');
             }
-            fs.unlinkSync(filePath); // delete the file after sending
+            
+            // Clean up: delete the file after sending
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
         });
     } catch (error) {
         console.error('Error generating CSV:', error);
@@ -385,7 +400,6 @@ if (!isMainThread) {
             const results = batchResults.flat();
             
             // Update DB with results
-            const bulkOps = [];
             const now = new Date();
             
             for (const result of results) {
