@@ -418,38 +418,48 @@
                 <div id="uploadErrorList" style="max-height: 150px; overflow-y: auto;"></div>
             </div>
         </div>
-        <!-- Filters -->
-        <div class="card">
-            <h2>Filters</h2>
-            <div class="filter-form">
-                <div class="form-group">
-                    <label for="statusFilter">Status</label>
-                    <select id="statusFilter">
-                        <option value="All">All</option>
-                        <option value="Up">Up</option>
-                        <option value="Down">Down</option>
-                        <option value="Unknown">Unknown</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="locationFilter">Location</label>
-                    <select id="locationFilter">
-                        <option value="All">All</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="searchFilter">Search</label>
-                    <input type="text" id="searchFilter" placeholder="Search by IP address">
-                </div>
-                <div class="filter-actions">
-                    <button id="applyFilters">Apply Filters</button>
-                    <button id="resetFilters" class="btn-secondary">Reset</button>
-                </div>
+       <!-- Filters -->
+       <div class="card">
+        <h2>Filters</h2>
+        <div class="refresh-info">
+            <div class="refresh-toggle">
+                <label for="autoRefresh">Auto-refresh:</label>
+                <input type="checkbox" id="autoRefresh" checked>
+            </div>
+            <div>
+                <span id="refreshStatus">Auto-refresh enabled</span>
+                <span class="loader" id="refreshLoader"></span>
             </div>
         </div>
+        <div class="filter-form">
+            <div class="form-group">
+                <label for="statusFilter">Status</label>
+                <select id="statusFilter">
+                    <option value="All">All</option>
+                    <option value="Up">Up</option>
+                    <option value="Down">Down</option>
+                    <option value="Unknown">Unknown</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="locationFilter">Location</label>
+                <select id="locationFilter">
+                    <option value="All">All</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="searchFilter">Search</label>
+                <input type="text" id="searchFilter" placeholder="Search by IP address">
+            </div>
+            <div class="filter-actions">
+                <button id="applyFilters">Apply Filters</button>
+                <button id="resetFilters" class="btn-secondary">Reset</button>
+            </div>
+        </div>
+    </div>
         
-        <!-- Download options -->
-        <div class="card">
+          <!-- Download options -->
+          <div class="card">
             <h2>Download Downtime History</h2>
             <div class="download-form">
                 <div class="form-row">
@@ -471,7 +481,6 @@
                 <button id="downloadBtn">Download CSV</button>
             </div>
         </div>
-        
         <!-- IP Table -->
         <div class="card">
             <h2>IP Status</h2>
