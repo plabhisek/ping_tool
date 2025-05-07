@@ -540,7 +540,6 @@
         let ipAddresses = [];
         let locations = [];
         let deleteIpId = null;
-        
         // DOM elements
         const ipTableBody = document.getElementById('ipTableBody');
         const statusFilter = document.getElementById('statusFilter');
@@ -550,7 +549,9 @@
         const historyModal = document.getElementById('historyModal');
         const deleteModal = document.getElementById('deleteModal');
         const deleteIpAddressSpan = document.getElementById('deleteIpAddress');
-        
+        const autoRefreshCheckbox = document.getElementById('autoRefresh');
+        const refreshStatus = document.getElementById('refreshStatus');
+        let refreshInterval;
         // Initialize page
         document.addEventListener('DOMContentLoaded', function() {
             fetchIPs();
@@ -565,56 +566,97 @@
             lastWeek.setDate(lastWeek.getDate() - 7);
             document.getElementById('startDate').value = lastWeek.toISOString().split('T')[0];
         });
+        // Function to manage the refresh interval
+function setupRefreshInterval() {
+    clearInterval(refreshInterval);
+    
+    if (autoRefreshCheckbox.checked) {
+        refreshStatus.textContent = 'Auto-refresh enabled';
+        refreshInterval = setInterval(fetchIPs, 5000);
+    } else {
+        refreshStatus.textContent = 'Auto-refresh disabled';
+    }
+}
+
+// Event listener for the checkbox
+autoRefreshCheckbox.addEventListener('change', setupRefreshInterval);
+
+// Setup the interval on page load
+setupRefreshInterval();
+        // Modify the fetchIPs function to use timestamps to reduce data transfer
+async function fetchIPs() {
+    try {
+        // Build query string for filters
+        const status = statusFilter.value;
+        const location = locationFilter.value;
+        const search = searchFilter.value;
+        const lastUpdate = window.lastUpdate || 0;
         
-        // Functions to fetch data
-        async function fetchIPs() {
-            try {
-                // Build query string for filters
-                const status = statusFilter.value;
-                const location = locationFilter.value;
-                const search = searchFilter.value;
-                
-                let url = '/api/ip';
-                const params = new URLSearchParams();
-                
-                if (status !== 'All') {
-                    params.append('status', status);
-                }
-                
-                if (location !== 'All') {
-                    params.append('location', location);
-                }
-                
-                if (search) {
-                    params.append('search', search);
-                }
-                
-                if (params.toString()) {
-                    url += '?' + params.toString();
-                }
-                
-                const response = await fetch(url);
-                
-                if (!response.ok) {
-                    throw new Error('Failed to fetch IPs');
-                }
-                
-                ipData = await response.json();
-                
-                // Update the IP address dropdown for download
-                ipAddresses = ['All', ...new Set(ipData.map(ip => ip.address))];
-                updateIpAddressDropdown();
-                
-                // Render the table
-                renderIpTable();
-                
-                // Update summary statistics
-                updateSummaryStats();
-                
-            } catch (error) {
-                console.error('Error fetching IPs:', error);
-            }
+        let url = '/api/ip';
+        const params = new URLSearchParams();
+        
+        if (status !== 'All') {
+            params.append('status', status);
         }
+        
+        if (location !== 'All') {
+            params.append('location', location);
+        }
+        
+        if (search) {
+            params.append('search', search);
+        }
+        
+        // Add timestamp to only get updated data
+        params.append('since', lastUpdate);
+        
+        if (params.toString()) {
+            url += '?' + params.toString();
+        }
+        
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+            throw new Error('Failed to fetch IPs');
+        }
+        
+        const result = await response.json();
+        
+        // Update last update timestamp
+        window.lastUpdate = result.timestamp || Date.now();
+        
+        // Only replace data if we got updates
+        if (result.data && result.data.length > 0) {
+            // Update existing data instead of full replacement
+            result.data.forEach(newIp => {
+                const index = ipData.findIndex(ip => ip._id === newIp._id);
+                if (index >= 0) {
+                    ipData[index] = newIp;
+                } else {
+                    ipData.push(newIp);
+                }
+            });
+            
+            // Handle deleted IPs if backend provides this info
+            if (result.deletedIds && result.deletedIds.length > 0) {
+                ipData = ipData.filter(ip => !result.deletedIds.includes(ip._id));
+            }
+            
+            // Render the table with updated data
+            renderIpTable();
+            
+            // Update summary statistics
+            updateSummaryStats();
+            
+            // Update the IP address dropdown for download
+            ipAddresses = ['All', ...new Set(ipData.map(ip => ip.address))];
+            updateIpAddressDropdown();
+        }
+        
+    } catch (error) {
+        console.error('Error fetching IPs:', error);
+    }
+}
         
         async function fetchLocations() {
             try {

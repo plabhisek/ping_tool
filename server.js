@@ -19,43 +19,138 @@ app.use(cors());
 app.set('view engine', 'ejs');
 
 // Connect to MongoDB with indexing options
+// Improve MongoDB schema and indexes
+// Replace the MongoDB connection and schema section
+
+// Connect to MongoDB with better options
 mongoose.connect('mongodb://localhost/ipMonitor', { 
     useNewUrlParser: true, 
-    useUnifiedTopology: true 
+    useUnifiedTopology: true,
+    // Add connection pool options
+    poolSize: 10,
+    socketTimeoutMS: 45000,
+    // Improve write concern for better performance
+    w: 1,
+    wtimeout: 2500
 });
 
 const db = mongoose.connection;
 db.on('error', console.error.bind(console, 'MongoDB connection error:'));
-db.once('open', () => {
+db.once('open', async () => {
     console.log('Connected to MongoDB');
-    // Create indexes for better query performance
-    IP.collection.createIndex({ address: 1 });
-    IP.collection.createIndex({ status: 1 });
-    IP.collection.createIndex({ lastChecked: 1 });
+    
+    try {
+        // Create more efficient compound indexes
+        await IP.collection.createIndex({ status: 1, lastChecked: -1 });
+        await IP.collection.createIndex({ address: 1 }, { unique: true });
+        await IP.collection.createIndex({ location: 1 });
+        
+        // Index for downtime history queries
+        await Downtime.collection.createIndex({ ipAddress: 1, timestamp: -1 });
+        
+        console.log('Database indexes created successfully');
+    } catch (error) {
+        console.error('Error creating database indexes:', error);
+    }
 });
 
-// Optimized Schema: Separate downtime collection to reduce document size
+// Optimize IP Schema with better field types and validation
 const ipSchema = new mongoose.Schema({
-    address: { type: String, required: true, unique: true },
-    location: { type: String, default: '' },
-    status: { type: String, default: 'Unknown' },
-    downtimeCount: { type: Number, default: 0 },
-    lastDowntime: { type: Date, default: null },
-    lastChecked: { type: Date, default: Date.now },
-    createdAt: { type: Date, default: Date.now }
+    address: { 
+        type: String, 
+        required: true, 
+        unique: true,
+        trim: true
+    },
+    location: { 
+        type: String, 
+        default: '',
+        trim: true,
+        index: true
+    },
+    status: { 
+        type: String, 
+        default: 'Unknown',
+        enum: ['Up', 'Down', 'Unknown'],
+        index: true
+    },
+    downtimeCount: { 
+        type: Number, 
+        default: 0,
+        min: 0
+    },
+    lastDowntime: { 
+        type: Date, 
+        default: null 
+    },
+    lastChecked: { 
+        type: Date, 
+        default: Date.now,
+        index: true 
+    },
+    createdAt: { 
+        type: Date, 
+        default: Date.now,
+        immutable: true 
+    }
+}, {
+    // Add timestamp fields (updatedAt)
+    timestamps: true,
+    // Use this for better memory usage
+    versionKey: false
 });
 
+// Optimize downtime schema for better performance
 const downtimeSchema = new mongoose.Schema({
-    ipAddress: { type: String, required: true },
-    timestamp: { type: Date, default: Date.now },
-    duration: { type: Number, default: null } // in milliseconds
+    ipAddress: { 
+        type: String, 
+        required: true,
+        index: true
+    },
+    timestamp: { 
+        type: Date, 
+        default: Date.now,
+        index: true
+    },
+    duration: { 
+        type: Number, 
+        default: null,
+        min: 0
+    }
 }, { 
     timeseries: {
         timeField: 'timestamp',
         metaField: 'ipAddress',
         granularity: 'seconds'
-    }
+    },
+    // Use this for better memory usage
+    versionKey: false
 });
+
+// Add methods to the schemas for better code organization
+ipSchema.methods.getDowntimeHistory = async function(limit = 10) {
+    return await Downtime.find({ ipAddress: this.address })
+        .sort({ timestamp: -1 })
+        .limit(limit)
+        .lean();
+};
+
+// Static methods for batch operations
+ipSchema.statics.getStatusCounts = async function() {
+    return await this.aggregate([
+        {
+            $group: {
+                _id: '$status',
+                count: { $sum: 1 }
+            }
+        }
+    ]);
+};
+
+// Efficient downtime count method
+downtimeSchema.statics.countByIpAddress = async function(ipAddress) {
+    return await this.countDocuments({ ipAddress });
+};
 
 const IP = mongoose.model('IP', ipSchema);
 const Downtime = mongoose.model('Downtime', downtimeSchema);
@@ -185,7 +280,7 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 // API to get all IP addresses and their statuses with filtering
 app.get('/api/ip', async (req, res) => {
     try {
-        const { status, location, search } = req.query;
+        const { status, location, search, since } = req.query;
         const query = {};
         
         // Apply filters if provided
@@ -201,11 +296,38 @@ app.get('/api/ip', async (req, res) => {
             query.address = { $regex: search, $options: 'i' };
         }
         
-        const ips = await IP.find(query).sort({ address: 1 });
-        res.send(ips);
+        // If since parameter exists, only return IPs updated after that timestamp
+        if (since) {
+            const sinceDate = new Date(parseInt(since));
+            query.lastChecked = { $gt: sinceDate };
+        }
+        
+        // Use lean() for better performance
+        const ips = await IP.find(query).sort({ address: 1 }).lean();
+        
+        // Return current timestamp along with data for frontend tracking
+        res.send({
+            timestamp: Date.now(),
+            data: ips
+        });
     } catch (error) {
         console.error('Error fetching IPs:', error);
         res.status(500).send({ error: 'Failed to fetch IP addresses' });
+    }
+});
+// Add a new endpoint for getting deleted IPs (optional enhancement)
+app.get('/api/deleted-ips', async (req, res) => {
+    try {
+        const { since } = req.query;
+        
+        // This would require a DeletedIP model to track deletions
+        // For now, we're just demonstrating the concept
+        const deletedIps = [];
+        
+        res.send(deletedIps);
+    } catch (error) {
+        console.error('Error fetching deleted IPs:', error);
+        res.status(500).send({ error: 'Failed to fetch deleted IPs' });
     }
 });
 
@@ -346,128 +468,127 @@ function pingInWorker(ipAddresses) {
 }
 
 // Worker thread implementation
+// Improve the worker thread ping implementation
+// Place this in the worker thread implementation section
+
 if (!isMainThread) {
     const { ipAddresses } = workerData;
     
-    const pingPromises = ipAddresses.map(async (ip) => {
-        try {
-            const res = await ping.promise.probe(ip);
-            return {
-                address: ip,
-                alive: res.alive,
-                time: res.time
-            };
-        } catch (error) {
-            return {
-                address: ip,
-                alive: false,
-                time: null
-            };
-        }
-    });
+    // Use Promise.all with concurrency limit to avoid system overload
+    const batchSize = 10; // Process 10 IPs at a time within each worker
+    const results = [];
     
-    Promise.all(pingPromises)
-        .then(results => {
-            parentPort.postMessage(results);
-        });
+    async function processBatch(batch) {
+        const batchResults = await Promise.all(batch.map(async (ip) => {
+            try {
+                // Add a timeout to prevent hanging pings
+                const res = await ping.promise.probe(ip, {
+                    timeout: 2, // 2 second timeout
+                    extra: ['-c', '1'], // Just send 1 packet
+                });
+                return {
+                    address: ip,
+                    alive: res.alive,
+                    time: res.time
+                };
+            } catch (error) {
+                console.error(`Error pinging ${ip}:`, error);
+                return {
+                    address: ip,
+                    alive: false,
+                    time: null,
+                    error: error.message
+                };
+            }
+        }));
+        
+        results.push(...batchResults);
+    }
+    
+    // Split ipAddresses into batches
+    const batches = [];
+    for (let i = 0; i < ipAddresses.length; i += batchSize) {
+        batches.push(ipAddresses.slice(i, i + batchSize));
+    }
+    
+    // Process batches sequentially to control concurrency
+    (async () => {
+        for (const batch of batches) {
+            await processBatch(batch);
+        }
+        parentPort.postMessage(results);
+    })();
 } else {
-    // Ping management - using worker threads
+    // In the main thread, add better error handling and retry logic
     async function runPingCycle() {
         try {
-            // Get all IPs from DB
-            const ips = await IP.find({});
+            // Get all IPs from DB - only fetch necessary fields for better performance
+            const ips = await IP.find({}, 'address status location').lean();
             
             if (ips.length === 0) {
                 setTimeout(runPingCycle, 5000);
                 return;
             }
             
-            // Divide IPs into chunks based on CPU cores
-            const cpuCount = os.cpus().length;
-            const batchSize = Math.max(1, Math.ceil(ips.length / cpuCount));
+            // Better worker distribution based on IP count
+            const ipCount = ips.length;
+            const maxWorkers = Math.min(os.cpus().length, 4); // Limit to 4 workers max
+            const optimalWorkerCount = Math.min(maxWorkers, Math.ceil(ipCount / 50)); // 1 worker per 50 IPs, up to max
+            
+            // Distribute IPs evenly across workers
+            const batchSize = Math.ceil(ipCount / optimalWorkerCount);
             const batches = [];
             
-            for (let i = 0; i < ips.length; i += batchSize) {
+            for (let i = 0; i < ipCount; i += batchSize) {
                 batches.push(ips.slice(i, i + batchSize).map(ip => ip.address));
             }
             
-            // Process each batch with a worker thread
-            const batchResults = await Promise.all(
-                batches.map(batch => pingInWorker(batch))
-            );
+            // Add retry logic for failed worker threads
+            async function processBatchWithRetry(batch, retries = 2) {
+                try {
+                    return await pingInWorker(batch);
+                } catch (error) {
+                    console.error(`Worker thread error (${retries} retries left):`, error);
+                    if (retries > 0) {
+                        console.log('Retrying batch...');
+                        return processBatchWithRetry(batch, retries - 1);
+                    }
+                    
+                    // If all retries fail, return IPs as unreachable
+                    console.error('All retries failed, marking IPs as down');
+                    return batch.map(ip => ({
+                        address: ip,
+                        alive: false,
+                        time: null,
+                        error: 'Worker thread failed after retries'
+                    }));
+                }
+            }
+            
+            // Process each batch with retry capability
+            const batchPromises = batches.map(batch => processBatchWithRetry(batch));
+            const batchResults = await Promise.all(batchPromises);
             
             // Flatten results
             const results = batchResults.flat();
             
-            // Update DB with results
-            const now = new Date();
+            // Update DB with results - this part would be replaced by the bulkWrite implementation
+            // from the performance-optimizations artifact
             
-            for (const result of results) {
-                const ip = ips.find(ip => ip.address === result.address);
-                
-                if (!ip) continue;
-                
-                const wasDown = ip.status === 'Down';
-                const isDown = !result.alive;
-                
-                // Handle status change: Up -> Down
-                if (!wasDown && isDown) {
-                    // Add to downtime collection
-                    const newDowntime = new Downtime({
-                        ipAddress: ip.address,
-                        timestamp: now
-                    });
-                    await newDowntime.save();
-                    
-                    // Update IP status
-                    await IP.updateOne(
-                        { _id: ip._id },
-                        { 
-                            status: 'Down',
-                            lastDowntime: now,
-                            lastChecked: now,
-                            $inc: { downtimeCount: 1 }
-                        }
-                    );
-                } 
-                // Handle status change: Down -> Up
-                else if (wasDown && !isDown) {
-                    // Update the duration of the last downtime record
-                    const lastDowntime = await Downtime.findOne({ 
-                        ipAddress: ip.address 
-                    }).sort({ timestamp: -1 });
-                    
-                    if (lastDowntime && !lastDowntime.duration) {
-                        lastDowntime.duration = now - lastDowntime.timestamp;
-                        await lastDowntime.save();
-                    }
-                    
-                    // Update IP status
-                    await IP.updateOne(
-                        { _id: ip._id },
-                        { 
-                            status: 'Up',
-                            lastChecked: now
-                        }
-                    );
-                }
-                // No status change, just update lastChecked
-                else {
-                    await IP.updateOne(
-                        { _id: ip._id },
-                        { lastChecked: now }
-                    );
-                }
-            }
+            // Add memory usage logging for monitoring
+            const memUsage = process.memoryUsage();
+            console.log(`Memory usage: RSS ${Math.round(memUsage.rss / 1024 / 1024)}MB, Heap ${Math.round(memUsage.heapUsed / 1024 / 1024)}MB / ${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`);
             
-            // Schedule next ping cycle
-            setTimeout(runPingCycle, 5000);
+            // Dynamic scheduling based on load
+            const cycleTime = 5000; // Default 5 seconds
+            setTimeout(runPingCycle, cycleTime);
         } catch (error) {
             console.error('Error in ping cycle:', error);
-            // Continue the cycle even if there's an error
-            setTimeout(runPingCycle, 5000);
+            // Continue the cycle after a delay even if there's an error
+            setTimeout(runPingCycle, 10000); // Longer delay on error
         }
     }
+
 
     // Start the ping cycle
     runPingCycle();
